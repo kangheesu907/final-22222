@@ -1,60 +1,82 @@
 import streamlit as st
 import google.generativeai as genai
+import pandas as pd
+from datetime import datetime
+import time
 
-st.set_page_config(page_title="고객 응대 AI 챗봇", page_icon="💬")
+# ---------------- 설정 ----------------
+genai.configure(api_key="AIzaSyDVpKMT594xfTU2XGVrFo-tLk0y4TgxSMc")
 
-# Google Gemini API 설정
-GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
-genai.configure(api_key=GOOGLE_API_KEY)
+SYSTEM_PROMPT = """
+당신은 고객 응대 전문 상담사입니다.
+1) 사용자는 불안감 해소를 위한 다양한 고민들을 언급합니다. 친근하고, 공감 어린 말투로 응답하세요.
+2) 사용자의 감정을 구체적으로 정리하여(무엇이/언제/어디서/어떻게) 수집하고, 고객에게 맞는 고민과 요구사항을 안내하세요.
+3) 마지막에는 “더 많은 상담소와 전화번호 등을 보내드릴까요?”라고 물어보세요.
+   만일 사용자가 원치 않으면 “당신의 모든 고민들을 들어드릴게요, 다음에 또 편하게 말해주세요.”라고 정중히 안내하세요.
+"""
 
-st.title("💬 고객 응대 AI 챗봇")
-st.write("불편사항이나 고민을 말씀해 주세요. 친절히 도와드릴게요.")
+# ---------------- Streamlit UI ----------------
+st.set_page_config(page_title="AI 고객 상담 챗봇", page_icon="💬", layout="wide")
+st.title("💬 Gemini 기반 AI 고객 상담 챗봇")
 
-# 모델 선택
-model_name = st.selectbox("모델 선택", ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"])
+model_choice = st.selectbox(
+    "모델 선택:",
+    ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"],
+    index=0
+)
 
-# 대화 기록 저장
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
+# 세션 상태 초기화
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-# 입력
-user_input = st.text_area("✏️ 메시지를 입력하세요", "")
+# CSV 저장 옵션
+save_csv = st.sidebar.checkbox("대화 자동 CSV 저장", value=False)
 
-# 버튼
-if st.button("전송"):
-    if user_input:
-        st.session_state.chat_history.append({"role": "user", "content": user_input})
+# ---------------- 챗봇 함수 ----------------
+def chat_with_gemini(prompt):
+    try:
+        model = genai.GenerativeModel(model_choice, system_instruction=SYSTEM_PROMPT)
+        chat = model.start_chat(history=[])
+        response = chat.send_message(prompt)
+        return response.text
+    except Exception as e:
+        st.error(f"⚠️ 오류 발생: {str(e)}")
+        time.sleep(2)
+        return "죄송합니다. 잠시 후 다시 시도해주세요."
 
-        # 시스템 프롬프트
-        system_prompt = (
-            "당신은 친절한 고객 응대 AI 상담원입니다. "
-            "사용자의 불안과 고민을 경청하며 공감하고, 감정을 구체적으로 정리하세요. "
-            "마지막에는 '더 많은 상담소와 전화번호 등을 보내드릴까요?'라고 제안하세요. "
-            "만약 사용자가 원치 않으면 '당신의 모든 고민들을 들어드릴게요, 다음에 또 편하게 말해주세요.'라고 말하세요."
-        )
+# ---------------- 대화 영역 ----------------
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
 
-        try:
-            model = genai.GenerativeModel(model_name)
-            chat = model.start_chat(history=st.session_state.chat_history)
-            response = chat.send_message(f"{system_prompt}
+if user_input := st.chat_input("고객님의 고민을 말씀해주세요."):
+    st.session_state.messages.append({"role": "user", "content": user_input})
+    with st.chat_message("user"):
+        st.markdown(user_input)
 
-{user_input}")
-            answer = response.text
-        except Exception as e:
-            answer = f"⚠️ 오류 발생: {e}"
+    with st.chat_message("assistant"):
+        response = chat_with_gemini(user_input)
+        st.markdown(response)
 
-        st.session_state.chat_history.append({"role": "assistant", "content": answer})
-    else:
-        st.warning("메시지를 입력해주세요.")
+    st.session_state.messages.append({"role": "assistant", "content": response})
 
-# 대화 표시
-for msg in st.session_state.chat_history:
-    if msg["role"] == "user":
-        st.markdown(f"👤 **고객:** {msg['content']}")
-    else:
-        st.markdown(f"🤖 **상담원:** {msg['content']}")
+    # CSV 자동 저장
+    if save_csv:
+        df = pd.DataFrame(st.session_state.messages)
+        df.to_csv("chat_log.csv", index=False)
 
-# 초기화 버튼
-if st.button("대화 초기화"):
-    st.session_state.chat_history = []
-    st.success("대화가 초기화되었습니다.")
+# ---------------- 로그 관리 ----------------
+st.sidebar.download_button(
+    label="📥 대화 로그 다운로드 (CSV)",
+    data=pd.DataFrame(st.session_state.messages).to_csv(index=False),
+    file_name=f"chat_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+    mime="text/csv"
+)
+
+if st.sidebar.button("🧹 대화 초기화"):
+    st.session_state.messages = []
+    st.experimental_rerun()
+
+st.sidebar.caption("세션 유지: 최근 6턴 이후 자동 리셋 (429 대응용)")
+st.sidebar.info(f"현재 모델: {model_choice}")
+
